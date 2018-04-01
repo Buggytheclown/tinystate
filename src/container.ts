@@ -1,20 +1,16 @@
 import { Observable } from 'rxjs/Observable';
-import { map, distinctUntilChanged, observeOn } from 'rxjs/operators';
+import { map, distinctUntilChanged } from 'rxjs/operators';
 import { BehaviorSubject } from 'rxjs/BehaviorSubject';
-import { Subject } from 'rxjs/Subject';
-import { async } from 'rxjs/scheduler/async';
-import { Subscription } from 'rxjs/Subscription';
 import { RootContainer } from './root_container';
 import { Injectable, Optional, Inject } from '@angular/core';
+import produce from 'immer';
 
 let containerId = -1;
 
 @Injectable()
 export abstract class Container<S extends object> {
-  private _setState$ = new Subject<Partial<S>>();
-  private _setStateSubscription: Subscription;
   private _state$ = new BehaviorSubject<S>(Object.assign({}, this.getInitialState()));
-  private _defaultContainerInstanceId: string = `${this._getClassName()}@${++containerId}`;
+  private _containerId: number = ++containerId;
 
   constructor(
     @Optional()
@@ -24,7 +20,6 @@ export abstract class Container<S extends object> {
     if (this._rootContainer) {
       this._rootContainer.registerContainer(this);
     }
-    this._setStateSubscription = this._subscribeToSetState();
   }
 
   /**
@@ -32,7 +27,11 @@ export abstract class Container<S extends object> {
    * state updated is completed.
    */
   protected setState(stateFn: (currentState: Readonly<S>) => Partial<S>) {
-    this._setState$.next(stateFn(this._state$.value));
+    this._state$.next(Object.assign({}, this._state$.value, stateFn(this._state$.value)));
+  }
+
+  protected updateState(stateFn: (currentState: S) => void) {
+    this._state$.next(produce(this._state$.value, stateFn));
   }
 
   /**
@@ -48,15 +47,8 @@ export abstract class Container<S extends object> {
   select<K>(selectFn: (state: Readonly<S>) => K): Observable<K> {
     return this._state$.pipe(
       map(state => selectFn(state as Readonly<S>)),
-      distinctUntilChanged(),
-      observeOn(async)
+      distinctUntilChanged()
     );
-  }
-
-  private _subscribeToSetState(): Subscription {
-    return this._setState$.subscribe(partialState => {
-      this._state$.next(Object.assign({}, this._state$.value, partialState));
-    });
   }
 
   /**
@@ -72,7 +64,6 @@ export abstract class Container<S extends object> {
    * @final
    */
   protected destroy() {
-    this._setStateSubscription.unsubscribe();
     this._state$.complete();
     if (this._rootContainer) {
       this._rootContainer.unregisterContainer(this);
@@ -84,7 +75,7 @@ export abstract class Container<S extends object> {
    * The returned id must be unique in the application.
    */
   getContainerInstanceId(): string {
-    return this._defaultContainerInstanceId;
+    return `${this._getClassName()}@${this._containerId}`;
   }
 
   private _getClassName(): string {
